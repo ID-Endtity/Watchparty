@@ -1,0 +1,13 @@
+{
+  "name": "watchparty",
+  "version": "0.1.0",
+  "description": "Private, low-latency screen sharing in the browser — WebRTC for video, WebSocket for signaling.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

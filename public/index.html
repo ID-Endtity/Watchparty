@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Watchparty</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>Watchparty</h1>
+
+      <section id="join-screen" class="screen">
+        <label for="room-code">Room code</label>
+        <div class="join-row">
+          <input id="room-code" maxlength="12" placeholder="e.g. ABC123" autocomplete="off" />
+          <button id="join-btn" class="primary">Join</button>
+        </div>
+        <p class="hint">Share a room code with your friends. Whoever shares first streams.</p>
+      </section>
+
+      <section id="room-screen" class="screen hidden">
+        <div class="room-header">
+          <span>Room <strong id="room-label"></strong></span>
+          <span id="stream-status" class="status">No stream yet</span>
+        </div>
+
+        <div class="controls">
+          <button id="share-btn" class="primary">Share screen</button>
+          <button id="stop-btn" class="hidden">Stop sharing</button>
+        </div>
+
+        <div id="stream-area" class="stream-area hidden">
+          <video id="remote-video" autoplay playsinline></video>
+          <video id="local-preview" autoplay playsinline muted></video>
+        </div>
+
+        <h2>In this room</h2>
+        <ul id="peers" class="peers"></ul>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
