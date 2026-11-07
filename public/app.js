@@ -1,8 +1,8 @@
-// Watchparty client — WebSocket signaling + room UI.
+// Watchparty client — WebSocket signaling + WebRTC media.
 //
-// The WebRTC media pipeline (screen capture + peer connections) is the next
-// milestone. Signaling and room state are fully wired; the media functions are
-// stubbed with TODO(next) markers plus a written flow so the next step is obvious.
+// The streamer captures the screen with getDisplayMedia and sends an offer to
+// each viewer (mesh); viewers auto-answer and display the stream. The server
+// only relays the handshake — video travels peer-to-peer.
 
 const el = (id) => document.getElementById(id);
 
@@ -25,8 +25,16 @@ let socket = null;
 let selfId = null;
 let isStreamer = false;
 let localStream = null;
-// peerId -> RTCPeerConnection (filled in the WebRTC milestone)
+// peerId -> RTCPeerConnection (null until a connection is opened to that peer)
 const peers = new Map();
+
+// STUN helps peers discover their public address so direct connections work
+// across the internet (behind NATs). The local "host" candidate already works
+// on localhost, so this only matters once you leave your machine. It's Google's
+// public STUN server — swap it for your own if you prefer.
+const RTC_CONFIG = {
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+};
 
 // --- WebSocket ---
 function connect() {
@@ -94,7 +102,8 @@ function handleMessage(msg) {
     case 'peer-joined':
       peers.set(msg.peerId, null);
       renderPeers();
-      // TODO(next): if isStreamer, create a connection + offer for this new viewer.
+      // A viewer joined after we started streaming — send them an offer too.
+      if (isStreamer) offerTo(msg.peerId).catch((err) => console.error('offer failed:', err));
       break;
 
     case 'peer-left':
@@ -104,8 +113,8 @@ function handleMessage(msg) {
 
     case 'stream-started':
       setStreamerState(msg.streamerId === selfId, msg.streamerId);
-      if (!isStreamer) setupViewer(msg.streamerId);
-      else startOffersToAllPeers();
+      // Only the confirmed streamer initiates; viewers wait for the offer.
+      if (isStreamer) startOffersToAllPeers();
       break;
 
     case 'stream-stopped':
@@ -128,61 +137,126 @@ function handleMessage(msg) {
     case 'error':
       console.error('Server error:', msg.message);
       setStatus(msg.message, false);
+      // If we captured a screen but were never confirmed as streamer (e.g. a
+      // race where someone else was already streaming), release the capture.
+      if (localStream && !isStreamer) {
+        localStream.getTracks().forEach((t) => t.stop());
+        tearDownStream();
+      }
       break;
   }
 }
 
-// --- Streaming: WebRTC media (next milestone) ---
-//
-// Planned flow:
-//   Streamer: getDisplayMedia() -> localStream -> send 'stream-started' ->
-//     for each viewer, new RTCPeerConnection -> addTracks -> createOffer ->
-//     setLocalDescription -> send { type:'offer', targetId, sdp }.
-//   Viewer:  on 'offer', new RTCPeerConnection -> add 'recvonly' transceiver ->
-//     setRemoteDescription(offer) -> createAnswer -> setLocalDescription ->
-//     send { type:'answer', targetId, sdp }. Video arrives via pc.ontrack.
-//   Both:    on 'icecandidate', send { type:'ice-candidate', targetId, candidate };
-//     on receiving one, pc.addIceCandidate(candidate).
+// --- WebRTC helpers ---
+
+// Create a connection to one peer and wire up the ICE-candidate relay.
+function createPeerConnection(peerId) {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  pc.pendingCandidates = [];
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      send({ type: 'ice-candidate', targetId: peerId, candidate: event.candidate });
+    }
+  };
+
+  peers.set(peerId, pc);
+  return pc;
+}
+
+// Apply any ICE candidates that arrived before the remote description was set
+// (a narrow race: candidates can trickle in faster than setRemoteDescription).
+async function flushPendingCandidates(pc) {
+  const pending = pc.pendingCandidates;
+  pc.pendingCandidates = [];
+  for (const candidate of pending) {
+    await pc.addIceCandidate(candidate);
+  }
+}
+
+// Streamer side: open a connection to one viewer and send them an offer.
+async function offerTo(peerId) {
+  if (!localStream) return;
+
+  const pc = createPeerConnection(peerId);
+  for (const track of localStream.getTracks()) {
+    pc.addTrack(track, localStream);
+  }
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  send({ type: 'offer', targetId: peerId, sdp: offer });
+}
+
+// --- Streaming controls ---
 
 async function startStreaming() {
-  // TODO(next):
-  //   localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-  //   localPreview.srcObject = localStream;
-  //   streamArea.classList.remove('hidden');
-  //   send({ type: 'stream-started' });
-  console.warn('startStreaming() not implemented — next milestone.');
+  try {
+    localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+  } catch (err) {
+    // User cancelled the share dialog or denied permission.
+    console.error('Screen capture failed:', err);
+    setStatus('Screen capture cancelled', false);
+    return;
+  }
+
+  localPreview.srcObject = localStream;
+  streamArea.classList.remove('hidden');
+  send({ type: 'stream-started' });
 }
 
 function startOffersToAllPeers() {
-  // TODO(next): for each peer id (except self), create a connection and send an offer.
+  for (const peerId of peers.keys()) {
+    offerTo(peerId).catch((err) => console.error('offer failed:', err));
+  }
 }
 
 function stopStreaming() {
-  // TODO(next):
-  //   send({ type: 'stream-stopped' });
-  //   localStream.getTracks().forEach((t) => t.stop());
-  //   tearDownStream();
-  console.warn('stopStreaming() not implemented — next milestone.');
+  send({ type: 'stream-stopped' });
+  if (localStream) localStream.getTracks().forEach((t) => t.stop());
+  // The server broadcasts 'stream-stopped' back to us too, which resets the UI.
 }
 
-function setupViewer(streamerId) {
-  // TODO(next): create a connection to streamerId; the offer arrives via handleOffer.
-  console.warn('setupViewer() not implemented — next milestone.');
+// --- Viewer side ---
+
+async function handleOffer(msg) {
+  const pc = createPeerConnection(msg.fromId);
+
+  // Viewer is receive-only: declare that we want to receive video + audio.
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.addTransceiver('audio', { direction: 'recvonly' });
+
+  pc.ontrack = (event) => {
+    remoteVideo.srcObject = event.streams[0];
+    streamArea.classList.remove('hidden');
+  };
+
+  await pc.setRemoteDescription(msg.sdp);
+  await flushPendingCandidates(pc);
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  send({ type: 'answer', targetId: msg.fromId, sdp: answer });
 }
 
-function handleOffer(msg) {
-  // TODO(next): viewer side — see flow above.
-  console.warn('handleOffer() not implemented — next milestone.');
+// --- Shared (both sides) ---
+
+async function handleAnswer(msg) {
+  const pc = peers.get(msg.fromId);
+  if (!pc) return;
+  await pc.setRemoteDescription(msg.sdp);
+  await flushPendingCandidates(pc);
 }
 
-function handleAnswer(msg) {
-  // TODO(next): streamer side — pc.setRemoteDescription(msg.sdp).
-  console.warn('handleAnswer() not implemented — next milestone.');
-}
-
-function handleIceCandidate(msg) {
-  // TODO(next): pc.addIceCandidate(msg.candidate).
-  console.warn('handleIceCandidate() not implemented — next milestone.');
+async function handleIceCandidate(msg) {
+  const pc = peers.get(msg.fromId);
+  if (!pc) return;
+  if (!pc.remoteDescription) {
+    // Offer/answer not applied yet — buffer it, flush later.
+    pc.pendingCandidates.push(msg.candidate);
+    return;
+  }
+  await pc.addIceCandidate(msg.candidate);
 }
 
 function closePeer(peerId) {
@@ -191,11 +265,19 @@ function closePeer(peerId) {
   peers.delete(peerId);
 }
 
+function closeAllConnections() {
+  for (const [id, pc] of peers) {
+    if (pc) pc.close();
+    peers.set(id, null);
+  }
+}
+
 function tearDownStream() {
   streamArea.classList.add('hidden');
   remoteVideo.srcObject = null;
   localPreview.srcObject = null;
   localStream = null;
+  closeAllConnections();
 }
 
 // --- Wire up ---
