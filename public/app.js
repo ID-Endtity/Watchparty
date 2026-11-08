@@ -31,12 +31,21 @@ let localStream = null;
 // peerId -> RTCPeerConnection (null until a connection is opened to that peer)
 const peers = new Map();
 
-// STUN helps peers discover their public address so direct connections work
-// across the internet (behind NATs). The local "host" candidate already works
-// on localhost, so this only matters once you leave your machine. It's Google's
-// public STUN server — swap it for your own if you prefer.
+// ICE configuration. STUN discovers each peer's public address for direct
+// connections; TURN (our own coturn on the VPS) relays video through the
+// server when a direct path is impossible — e.g. a phone on cellular.
 const RTC_CONFIG = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    {
+      urls: [
+        'turn:mooofor.mooo.com:3478',
+        'turn:mooofor.mooo.com:3478?transport=tcp',
+      ],
+      username: 'watchparty',
+      credential: 'wp-turn-9f4k2m7x',
+    },
+  ],
 };
 
 // --- WebSocket ---
