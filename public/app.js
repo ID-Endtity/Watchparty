@@ -11,6 +11,9 @@ const joinScreen = el('join-screen');
 const roomScreen = el('room-screen');
 const roomCodeInput = el('room-code');
 const joinBtn = el('join-btn');
+const createBtn = el('create-btn');
+const copyBtn = el('copy-btn');
+const joinError = el('join-error');
 const roomLabel = el('room-label');
 const streamStatus = el('stream-status');
 const shareBtn = el('share-btn');
@@ -51,12 +54,29 @@ function send(message) {
 
 // --- Room flow ---
 function joinRoom() {
+  joinError.textContent = '';
   const code = roomCodeInput.value.trim();
-  if (!code) return;
+  if (!code) {
+    joinError.textContent = 'Enter a room code';
+    return;
+  }
   send({ type: 'join', room: code });
-  joinScreen.classList.add('hidden');
-  roomScreen.classList.remove('hidden');
-  roomLabel.textContent = code.toUpperCase();
+}
+
+function createRoom() {
+  joinError.textContent = '';
+  send({ type: 'create-room' });
+}
+
+function copyCode() {
+  const code = roomLabel.textContent;
+  if (!code) return;
+  navigator.clipboard.writeText(code)
+    .then(() => {
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+    })
+    .catch(() => {});
 }
 
 function renderPeers() {
@@ -94,6 +114,8 @@ function handleMessage(msg) {
     case 'joined':
       selfId = msg.selfId;
       roomLabel.textContent = msg.room;
+      joinScreen.classList.add('hidden');
+      roomScreen.classList.remove('hidden');
       msg.peers.forEach((id) => peers.set(id, null));
       setStreamerState(msg.streamerId === selfId, msg.streamerId);
       renderPeers();
@@ -136,7 +158,11 @@ function handleMessage(msg) {
 
     case 'error':
       console.error('Server error:', msg.message);
-      setStatus(msg.message, false);
+      if (selfId) {
+        setStatus(msg.message, false);
+      } else {
+        joinError.textContent = msg.message;
+      }
       // If we captured a screen but were never confirmed as streamer (e.g. a
       // race where someone else was already streaming), release the capture.
       if (localStream && !isStreamer) {
@@ -281,10 +307,12 @@ function tearDownStream() {
 }
 
 // --- Wire up ---
+createBtn.addEventListener('click', createRoom);
 joinBtn.addEventListener('click', joinRoom);
 roomCodeInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') joinRoom();
 });
+copyBtn.addEventListener('click', copyCode);
 shareBtn.addEventListener('click', startStreaming);
 stopBtn.addEventListener('click', stopStreaming);
 

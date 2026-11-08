@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -51,6 +51,16 @@ function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
 }
 
+// 32 unambiguous characters (no I, O, 0, 1). 8 chars ≈ 40 bits of entropy.
+const CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+function generateCode() {
+  const bytes = randomBytes(8);
+  let code = '';
+  for (const b of bytes) code += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  return code;
+}
+
 function clientsIn(roomCode) {
   return rooms.get(roomCode)?.clients;
 }
@@ -63,23 +73,38 @@ function broadcast(roomCode, message, exceptId = null) {
   }
 }
 
+// Put a socket into a room (creating the room if needed) and announce it.
+function addClientToRoom(ws, roomCode) {
+  if (!rooms.has(roomCode)) rooms.set(roomCode, { clients: new Map(), streamerId: null });
+  const room = rooms.get(roomCode);
+  ws.roomCode = roomCode;
+  room.clients.set(ws.id, ws);
+  send(ws, {
+    type: 'joined',
+    room: roomCode,
+    selfId: ws.id,
+    peers: [...room.clients.keys()].filter((id) => id !== ws.id),
+    streamerId: room.streamerId,
+  });
+  broadcast(roomCode, { type: 'peer-joined', peerId: ws.id }, ws.id);
+}
+
 function handleMessage(ws, msg) {
   switch (msg.type) {
     case 'join': {
       const roomCode = normalizeCode(msg.room);
       if (!roomCode) return send(ws, { type: 'error', message: 'Room code required' });
-      if (!rooms.has(roomCode)) rooms.set(roomCode, { clients: new Map(), streamerId: null });
-      const room = rooms.get(roomCode);
-      ws.roomCode = roomCode;
-      room.clients.set(ws.id, ws);
-      send(ws, {
-        type: 'joined',
-        room: roomCode,
-        selfId: ws.id,
-        peers: [...room.clients.keys()].filter((id) => id !== ws.id),
-        streamerId: room.streamerId,
-      });
-      broadcast(roomCode, { type: 'peer-joined', peerId: ws.id }, ws.id);
+      if (!rooms.has(roomCode)) return send(ws, { type: 'error', message: 'Room not found' });
+      addClientToRoom(ws, roomCode);
+      break;
+    }
+
+    case 'create-room': {
+      let roomCode;
+      do {
+        roomCode = generateCode();
+      } while (rooms.has(roomCode));
+      addClientToRoom(ws, roomCode);
       break;
     }
 

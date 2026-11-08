@@ -11,19 +11,29 @@
       <h1>Watchparty</h1>
 
       <section id="join-screen" class="screen">
-        <label for="room-code">Room code</label>
+        <button id="create-btn" class="primary full">Create room</button>
+        <p class="hint">Creates a private room and gives you a code to share.</p>
+
+        <hr class="divider" />
+
+        <label for="room-code">Join with a code</label>
         <div class="join-row">
-          <input id="room-code" maxlength="12" placeholder="e.g. ABC123" autocomplete="off" />
-          <button id="join-btn" class="primary">Join</button>
+          <input id="room-code" maxlength="12" placeholder="e.g. K7MN2PQR" autocomplete="off" />
+          <button id="join-btn">Join</button>
         </div>
-        <p class="hint">Share a room code with your friends. Whoever shares first streams.</p>
+        <p id="join-error" class="error"></p>
       </section>
 
       <section id="room-screen" class="screen hidden">
         <div class="room-header">
-          <span>Room <strong id="room-label"></strong></span>
+          <div class="room-code">
+            <span>Room <strong id="room-label"></strong></span>
+            <button id="copy-btn" class="small">Copy</button>
+          </div>
           <span id="stream-status" class="status">No stream yet</span>
         </div>
+
+        <p class="hint">Share this code with friends so they can join.</p>
 
         <div class="controls">
           <button id="share-btn" class="primary">Share screen</button>
