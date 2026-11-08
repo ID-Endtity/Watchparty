@@ -98,12 +98,13 @@ function setStatus(text, live) {
   streamStatus.classList.toggle('live', !!live);
 }
 
-function setStreamerState(streaming, streamerId) {
-  isStreamer = streaming;
+function setStreamerState(streamerId) {
+  isStreamer = streamerId === selfId;
+  const streaming = streamerId != null;
   shareBtn.classList.toggle('hidden', streaming);
-  stopBtn.classList.toggle('hidden', !streaming);
+  stopBtn.classList.toggle('hidden', !isStreamer);
   const text = streaming
-    ? (streamerId === selfId ? 'You are streaming' : 'Live')
+    ? (isStreamer ? 'You are streaming' : 'Live')
     : 'No stream yet';
   setStatus(text, streaming);
 }
@@ -117,7 +118,7 @@ function handleMessage(msg) {
       joinScreen.classList.add('hidden');
       roomScreen.classList.remove('hidden');
       msg.peers.forEach((id) => peers.set(id, null));
-      setStreamerState(msg.streamerId === selfId, msg.streamerId);
+      setStreamerState(msg.streamerId);
       renderPeers();
       break;
 
@@ -134,13 +135,13 @@ function handleMessage(msg) {
       break;
 
     case 'stream-started':
-      setStreamerState(msg.streamerId === selfId, msg.streamerId);
+      setStreamerState(msg.streamerId);
       // Only the confirmed streamer initiates; viewers wait for the offer.
       if (isStreamer) startOffersToAllPeers();
       break;
 
     case 'stream-stopped':
-      setStreamerState(false, null);
+      setStreamerState(null);
       tearDownStream();
       break;
 
@@ -184,6 +185,10 @@ function createPeerConnection(peerId) {
     if (event.candidate) {
       send({ type: 'ice-candidate', targetId: peerId, candidate: event.candidate });
     }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log(`ICE (peer ${shortId(peerId)}): ${pc.iceConnectionState}`);
   };
 
   peers.set(peerId, pc);
